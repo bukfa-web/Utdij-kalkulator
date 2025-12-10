@@ -1,0 +1,38 @@
+A jogszabály (25/2013. NFM rendelet) szövege alapján a matek a következőképpen néz ki – ez lesz a kalkulátorunk "agya":
+
+1. A Jogszabály Értelmezése (Nettó vs. Bruttó)
+A rendelet kétféle díjelemet különböztet meg, és eltérően kezeli az ÁFÁ-t. Ez kritikus a pontos számlázáshoz!
+
+Infrastruktúradíj (1. §):
+
+A szöveg azt írja: "általános forgalmi adót magában foglaló... alapmértéke".
+
+Tehát: Ez a szám BRUTTÓ.
+
+Példa a szövegből (J5 gyorsforgalmi): 158,50 Ft (Ez a fizetendő összeg).
+
+Külsőköltségdíj (2. §):
+
+A szöveg azt írja: "általános forgalmi adót nem tartalmazó mértékét".
+
+Tehát: Ez a szám NETTÓ.
+
+Matek: A táblázatban lévő számot meg kell szorozni 1,27-tel (27% ÁFA), hogy megkapjuk a fizetendő bruttó összeget.
+
+2. Adatok összefésülése a fájlokból
+Megvizsgáltam a feltöltött Munka3.csv és Munka4.csv fájlokat. Úgy tűnik, ezek tartalmazzák a részletes díjakat. Összegyúrtam a jogszabály szövegét és a fájlokat egyetlen, tiszta Python struktúrába.
+
+Íme a véglegesnek szánt kalkulátor kód, amely:
+
+Kezeli a J2, J3, J4, J5 kategóriákat.
+
+Külön kezeli a Gyorsforgalmi és Főúti díjakat.
+
+Helyesen számolja az Infrastruktúradíjat (Bruttó fix) és a Külsőköltségdíjat (Nettó bázis + ÁFA).
+
+Beszorozza a korábban kinyert úthosszal.
+
+Mit csináltunk most?
+Jogilag helyes matek: Most már külön számoljuk az infrastruktúrát (ami ÁFÁ-s alapból) és a külsőköltséget (amire rá kell tenni az ÁFÁ-t). Ez elengedhetetlen, ha a cég vissza akarja igényelni az ÁFÁ-t, vagy tisztán akarja látni a költségeket.
+
+Adatbázis: A rendszer most már a feltöltött 1.melléklet...csv fájlból olvassa az utakat, tehát a teljes magyar hálózatot ismeri.

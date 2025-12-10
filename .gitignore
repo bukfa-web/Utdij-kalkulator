@@ -1,0 +1,5 @@
+__pycache__/
+*.pyc
+.env
+.vscode/
+# A nagy adatfájlt feltölthetjük most, de később lehet, hogy .gitignoralni kell, ha túl nagy
