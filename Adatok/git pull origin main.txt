@@ -1,0 +1,4 @@
+Ha legközelebb váltasz a gépek között, elég lesz csak egy egyszerű:
+PowerShell
+
+git pull origin main
