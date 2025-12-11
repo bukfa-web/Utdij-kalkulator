@@ -1,3 +1,17 @@
+Javasolt Megoldások és Tervezés1. Útvonal Tervezés (Több Pont) és KalkulációA jelenlegi szamolas függvény csak egyetlen út teljes díját számolja ki. A több szakaszból álló útvonalhoz (pl. M7 $\rightarrow$ M0 $\rightarrow$ 4. főút) egy új, magasabb szintű logikára van szükség.Javaslat: szamolas_utvonal(self, jarmu, utvonal_lista, ev) metódusA metódus inputja egy lista lenne, ami tartalmazza a bejárni kívánt útszakaszokat (pl. ["M7", "M0", "4"]).Logika:Végigmegy a bemeneti útvonal listán.Minden útra (ut) külön lekérdezi az adatbázisból a szakaszokat az adott évre.Összegzi a main.py-ban már meglévő szamolas logika szerint az egyes szakaszok díjait (Infra Bruttó + Külső Bruttó).A végén visszaadja az összesített útdíjat, kilométert és díj bontást.Jelentős módosítás: Nettó kalkulációA kérésnek megfelelően az alapértelmezett kimenetet átállítjuk nettó értékre (ÁFA nélkül), de a kódban meghagyjuk a bruttó számítást is, mivel az adatok az ÁFÁ-t is tartalmazzák.Módosítás a main.py-ban:Kiszámítjuk a Külső Díj Nettó értékét: A jelenlegi kód $1.27$-tel szorozza a külső díjat. Ezt vissza kell osztani $1.27$-tel a nettó összeg megkapásához.Kiszámítjuk az Infra Díj Nettó értékét: Az Infra díj az adatbázisban bruttó. Ezt is vissza kell osztani $1.27$-tel.Végeredmény: Az összesített nettó infra + nettó külső díj.2. GPS Adatok Hiányának Pótlása (Simuláció)Mivel nincsenek valós koordináták, egy szimulált GPS adatbázisra van szükségünk. Ez lehetővé teszi a terkep_generalasa függvény továbbfejlesztését, hogy a térkép valóban mutasson valamit.Javaslat: Külön Modul a GPS Adatokhoz (gps_adatok.py)Ezzel elkerüljük a hosszú kódokat a main.py-ban és moduláris marad a struktúra.A modul feladata: Tartalmaz egy előre definiált szótárt, ami minden úthoz (pl. "M0", "M7", "4") hozzárendel egy sor GPS koordináta párt (polyline). Ezek nem valósak, de lehetővé teszik a Folium vonalrajzolását.Példa Struktúra (gps_adatok.py):PythonUTVONAL_KOORDINATAK = {
+    "M0": [
+        [47.5, 19.0], # Szimulált Kezdet
+        [47.4, 18.9],
+        [47.3, 19.1]  # Szimulált Vég
+    ],
+    "M7": [
+        # ... további szimulált koordináták
+    ],
+    # ...
+}
+Módosítás a main.py-ban (terkep_generalasa):A Folium térkép most már képes lesz végigmenni ezen a szimulált vonalon, és kirajzolni az útvonalat.Importáljuk az új modult (from gps_adatok import UTVONAL_KOORDINATAK).Az adott út koordinátáit lekérjük a szótárból.A Folium PolyLine funkciójával kirajzoljuk a vonalat.🛠️ Megvalósítás Terve (Módosítandó Fájlok)Új Fájl: gps_adatok.py (Szimulált GPS koordináták)main.py:Új függvény: szamolas_utvonal (Útvonal-kalkuláció).Módosítás: szamolas eredményének nettóra való átállítása (segítő funkció az új függvénynek).Módosítás: terkep_generalasa GPS adatokat rajzol.app.py:Módosítás: Az útvonal input kezelése (pl. több útvonal kiválasztása vagy egy string $\rightarrow$ listává alakítása).
+
+
 A jogszabály (25/2013. NFM rendelet) szövege alapján a matek a következőképpen néz ki – ez lesz a kalkulátorunk "agya":
 
 1. A Jogszabály Értelmezése (Nettó vs. Bruttó)

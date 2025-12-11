@@ -1,106 +1,81 @@
-import pandas as pd
+import sqlite3
 import os
+import math
+
+AFA = 1.27
 
 class UtdijKalkulator:
-    def __init__(self, csv_utvonal):
-        # 1. INFRASTRUKTÚRADÍJ (BRUTTÓ Ft/km) - 2026. jan. 1-től
-        # Forrás: 375/2025. Korm. rendelet
-        self.infra_dijak_brutto = {
-            "J2": {"gyorsforgalmi": 65.89, "fout": 53.30},
-            "J3": {"gyorsforgalmi": 105.32, "fout": 88.15},
-            "J4": {"gyorsforgalmi": 163.26, "fout": 150.97},
-            "J5": {"gyorsforgalmi": 170.94, "fout": 157.05}
+    def __init__(self, db_path="utdij_adatbazis.db"):
+        self.db_path = db_path
+
+        # 2025 és 2026 díjak – hivatalos NÚSZ táblázatból (bruttó Ft/km)
+        self.dijak_brutto = {
+            2025: {
+                "J2": {"infra_gy": 63.17, "infra_f": 34.54, "kulso": {"EURO6": 11.35, "ALACSONY": 9.87, "ZERO": 0.0}},
+                "J3": {"infra_gy": 100.98, "infra_f": 57.13, "kulso": {"EURO6": 13.82, "ALACSONY": 11.35, "ZERO": 0.0}},
+                "J4": {"infra_gy": 156.53, "infra_f": 97.84, "kulso": {"EURO6": 15.30, "ALACSONY": 12.34, "ZERO": 0.0}},
+                "J5": {"infra_gy": 163.89, "infra_f": 101.78, "kulso": {"EURO6": 16.78, "ALACSONY": 13.82, "ZERO": 0.0}}
+            },
+            2026: {
+                "J2": {"infra_gy": 65.89, "infra_f": 53.30, "kulso": {"EURO6": 11.35, "ALACSONY": 9.87, "ZERO": 0.0}},
+                "J3": {"infra_gy": 105.32, "infra_f": 88.15, "kulso": {"EURO6": 13.82, "ALACSONY": 11.35, "ZERO": 0.0}},
+                "J4": {"infra_gy": 163.26, "infra_f": 150.97, "kulso": {"EURO6": 15.30, "ALACSONY": 12.34, "ZERO": 0.0}},
+                "J5": {"infra_gy": 170.94, "infra_f": 157.05, "kulso": {"EURO6": 16.78, "ALACSONY": 13.82, "ZERO": 0.0}}
+            }
         }
 
-        # 2. KÜLSŐKÖLTSÉGDÍJ (NETTÓ Ft/km) - Becsült átlag (Euro VI)
-        # Forrás: NFM rendelet struktúrája (Nettó -> Bruttósítani kell)
-        self.kulsokoltseg_netto = {
-            "J2": {"gyorsforgalmi": 12.50, "fout": 5.50},
-            "J3": {"gyorsforgalmi": 18.20, "fout": 8.10},
-            "J4": {"gyorsforgalmi": 25.40, "fout": 12.30},
-            "J5": {"gyorsforgalmi": 30.10, "fout": 15.20}
-        }
+    def szamolas_terkep_pontokkal(self, pontok_list, ev=2026, kategoria="J5", euro="EURO6", netto_brutto="netto"):
+        if len(pontok_list) < 2:
+            return "<span style='color:red'>Legalább 2 pont szükséges!</span>"
 
-        # 3. ÚTHÁLÓZAT BETÖLTÉSE
-        try:
-            # Pontosvesszővel elválasztott CSV kezelése
-            self.uthalozat = pd.read_csv(csv_utvonal, sep=';', encoding='utf-8')
-            
-            # Oszlopnevek tisztítása
-            self.uthalozat.columns = self.uthalozat.columns.str.strip()
-            
-            # Tipus normalizálása (hogy a kód értse: 'gyorsforgalmi' vagy 'fout')
-            # Feltételezzük, hogy a CSV-ben az oszlop neve 'Infrastruktúradíj-szint'
-            # Ha nem találja, megpróbáljuk a 'Tipus' oszlopot
-            col_tipus = 'Infrastruktúradíj-szint' if 'Infrastruktúradíj-szint' in self.uthalozat.columns else 'Tipus'
-            
-            self.uthalozat['Tipus_Kod'] = self.uthalozat[col_tipus].apply(
-                lambda x: 'gyorsforgalmi' if 'gyors' in str(x).lower() else 'fout'
-            )
-            print(f"✅ Adatbázis betöltve: {len(self.uthalozat)} útszakasz.")
-            
-        except Exception as e:
-            print(f"❌ HIBA: Nem sikerült betölteni a {csv_utvonal} fájlt.")
-            print(f"Részletek: {e}")
-            self.uthalozat = None
+        if ev not in self.dijak_brutto:
+            return "<span style='color:red'>Év nem támogatott!</span>"
 
-    def szamolas(self, jarmu_kat, ut_nev):
-        if self.uthalozat is None: return "Hiba: Nincs adatbázis."
-        if jarmu_kat not in self.infra_dijak_brutto: return "Hiba: Ismeretlen kategória (pl. J2, J5)."
+        dij = self.dijak_brutto[ev][kategoria]
 
-        # Szűrés az útra (pl. "M1")
-        # Feltételezzük, hogy az út neve az 'Útdíjfizetési kötelezettséggel érintett út száma' oszlopban van
-        # Vagy egyszerűen 'Ut' oszlopban
-        col_ut = 'Útdíjfizetési kötelezettséggel érintett út száma' if 'Útdíjfizetési kötelezettséggel érintett út száma' in self.uthalozat.columns else 'Ut'
-        
-        szurt = self.uthalozat[self.uthalozat[col_ut].astype(str) == str(ut_nev)]
+        # Kumulativ távolság
+        kumulativ = [0.0]
+        for i in range(1, len(pontok_list)):
+            p1, p2 = pontok_list[i-1], pontok_list[i]
+            tav = math.dist((p1['lat'], p1['lon']), (p2['lat'], p2['lon'])) * 111.32  # kb. km
+            kumulativ.append(kumulativ[-1] + tav)
 
-        if szurt.empty:
-            return f"Nincs adat a(z) {ut_nev} útról."
+        # DB szakaszok (61-es teszt útra)
+        conn = sqlite3.connect(self.db_path)
+        cur = conn.cursor()
+        cur.execute("SELECT kezdo, veg, hossz_m, tipus, szorzo FROM utszakaszok WHERE ev=? AND ut_szam='61' ORDER BY CAST(REPLACE(kezdo,' + ','.') AS REAL)", (ev,))
+        szakaszok = cur.fetchall()
+        conn.close()
 
-        osszesen = {"km": 0, "infra_brutto": 0, "kulso_netto": 0, "kulso_brutto": 0}
+        def szelveny_num(s): return float(s.replace(" + ", ".").replace(" ", ""))
 
-        for _, sor in szurt.iterrows():
-            # Hossz kezelése (méterben van, átváltjuk km-re)
-            # Kezeljük a tizedesvesszőt (pl. "1,5" -> 1.5)
-            raw_hossz = str(sor.get('ED szakasz hossz (m)', sor.get('Hossz_m', 0)))
-            hossz_m = float(raw_hossz.replace(',', '.'))
-            hossz_km = hossz_m / 1000.0
-            
-            tipus = sor['Tipus_Kod']
-            
-            # Számítás
-            infra = hossz_km * self.infra_dijak_brutto[jarmu_kat][tipus]
-            kulso_n = hossz_km * self.kulsokoltseg_netto[jarmu_kat][tipus]
-            kulso_b = kulso_n * 1.27 # ÁFA
+        osszdij = 0.0
+        kimutatas = f"<h3>Útvonal számítás – {ev}, {kategoria}, {euro}</h3><ol>"
 
-            osszesen["km"] += hossz_km
-            osszesen["infra_brutto"] += infra
-            osszesen["kulso_netto"] += kulso_n
-            osszesen["kulso_brutto"] += kulso_b
+        for i in range(len(pontok_list)-1):
+            k = kumulativ[i]
+            v = kumulativ[i+1]
+            resz_dij = 0.0
+            kimutatas += f"<li>Szakasz {i+1} ({v-k:.1f} km):<br>"
 
-        total = osszesen["infra_brutto"] + osszesen["kulso_brutto"]
-        
-        return (
-            f"\n=== KALKULÁCIÓ: {ut_nev} ({jarmu_kat}) ===\n"
-            f"Távolság:           {osszesen['km']:.2f} km\n"
-            f"----------------------------------------\n"
-            f"Infrastruktúradíj:  {osszesen['infra_brutto']:.0f} Ft (Bruttó)\n"
-            f"Külsőköltségdíj:    {osszesen['kulso_brutto']:.0f} Ft (Bruttó)\n"
-            f"----------------------------------------\n"
-            f"VÉGÖSSZEG:          {total:.0f} Ft"
-        )
+            for kezdo_str, veg_str, hossz_m, tipus, szorzo in szakaszok:
+                k_db = szelveny_num(kezdo_str)
+                v_db = szelveny_num(veg_str)
+                atfedes = max(0, min(v, v_db) - max(k, k_db))
+                if atfedes > 0:
+                    infra = dij["infra_gy"] if "gyors" in tipus else dij["infra_f"]
+                    kulso = dij["kulso"].get(euro, 0.0)
+                    rate = infra + kulso
+                    dij_resz = atfedes * rate * szorzo
+                    if netto_brutto == "netto":
+                        dij_resz /= AFA
+                    resz_dij += dij_resz
+                    kimutatas += f"  • {atfedes:.2f} km × {rate:.1f} Ft/km × {szorzo:.3f} = {dij_resz:,.0f} Ft<br>"
+            osszdij += resz_dij
+            kimutatas += f"  <b>Részösszeg: {resz_dij:,.0f} Ft</b></li>"
 
-# --- Futtatás ---
-if __name__ == "__main__":
-    # Itt add meg a CSV fájl pontos nevét!
-    db_file = "database.csv"
-    
-    if os.path.exists(db_file):
-        app = UtdijKalkulator(db_file)
-        
-        # Példa futtatás
-        print(app.szamolas("J5", "M1"))
-        print(app.szamolas("J4", "86"))
-    else:
-        print(f"Kérlek, nevezd át a letöltött CSV fájlt erre: {db_file}")
+        kimutatas += "</ol>"
+        if netto_brutto == "netto":
+            osszdij /= AFA
+        kimutatas += f"<h2 style='color:green'>Összesen: <b>{osszdij:,.0f} Ft ({netto_brutto.upper()})</b></h2>"
+        return kimutatas
