@@ -1,81 +1,172 @@
 import sqlite3
 import os
 import math
+import requests  # OSRM routinghoz
+from haversine import haversine  # Távolság fallback
+from geopy.geocoders import Nominatim  # Település geokódolás
+from geopy.exc import GeocoderTimedOut
 
-AFA = 1.27
+AFA = 1.27  # Bruttó / AFA = nettó
 
 class UtdijKalkulator:
     def __init__(self, db_path="utdij_adatbazis.db"):
         self.db_path = db_path
-
-        # 2025 és 2026 díjak – hivatalos NÚSZ táblázatból (bruttó Ft/km)
-        self.dijak_brutto = {
-            2025: {
-                "J2": {"infra_gy": 63.17, "infra_f": 34.54, "kulso": {"EURO6": 11.35, "ALACSONY": 9.87, "ZERO": 0.0}},
-                "J3": {"infra_gy": 100.98, "infra_f": 57.13, "kulso": {"EURO6": 13.82, "ALACSONY": 11.35, "ZERO": 0.0}},
-                "J4": {"infra_gy": 156.53, "infra_f": 97.84, "kulso": {"EURO6": 15.30, "ALACSONY": 12.34, "ZERO": 0.0}},
-                "J5": {"infra_gy": 163.89, "infra_f": 101.78, "kulso": {"EURO6": 16.78, "ALACSONY": 13.82, "ZERO": 0.0}}
-            },
-            2026: {
-                "J2": {"infra_gy": 65.89, "infra_f": 53.30, "kulso": {"EURO6": 11.35, "ALACSONY": 9.87, "ZERO": 0.0}},
-                "J3": {"infra_gy": 105.32, "infra_f": 88.15, "kulso": {"EURO6": 13.82, "ALACSONY": 11.35, "ZERO": 0.0}},
-                "J4": {"infra_gy": 163.26, "infra_f": 150.97, "kulso": {"EURO6": 15.30, "ALACSONY": 12.34, "ZERO": 0.0}},
-                "J5": {"infra_gy": 170.94, "infra_f": 157.05, "kulso": {"EURO6": 16.78, "ALACSONY": 13.82, "ZERO": 0.0}}
-            }
+        self.geolocator = Nominatim(user_agent="utdij_kalkulator", timeout=10)  # Geopy timeout 10s
+        # Fallback koordináták benchmarkhoz
+        self.fallback_coords = {
+            "Szekszárd": (46.35, 18.70),
+            "Cece": (46.71, 18.21),
+            "Nemesszalók": (46.62, 18.39)
         }
 
-    def szamolas_terkep_pontokkal(self, pontok_list, ev=2026, kategoria="J5", euro="EURO6", netto_brutto="netto"):
-        if len(pontok_list) < 2:
-            return "<span style='color:red'>Legalább 2 pont szükséges!</span>"
+    def get_tariffs(self, kategoria, ev, euro):
+        """Díjak lekérdezése tariffs táblából"""
+        try:
+            conn = sqlite3.connect(self.db_path)
+            query = """
+            SELECT infra_gyors, infra_fo, kulso_lezajo, co2 FROM tariffs 
+            WHERE kategoria = ? AND ev = ? AND euro = ?
+            """
+            result = conn.execute(query, (kategoria, ev, euro)).fetchone()
+            conn.close()
+            if result:
+                return result  # (infra_gyors, infra_fo, kulso_lezajo, co2) bruttó Ft/km
+        except Exception as e:
+            print(f"DB hiba tariffs-nél: {e}")
+        # Fallback ha DB üres (manuális J5 EURO6)
+        fallback = {
+            2025: (163.89, 101.78, 16.78, 39.48),
+            2026: (170.94, 157.05, 16.78, 39.48)
+        }
+        return fallback.get(ev, (0, 0, 0, 0))
 
-        if ev not in self.dijak_brutto:
-            return "<span style='color:red'>Év nem támogatott!</span>"
-
-        dij = self.dijak_brutto[ev][kategoria]
-
-        # Kumulativ távolság
-        kumulativ = [0.0]
-        for i in range(1, len(pontok_list)):
-            p1, p2 = pontok_list[i-1], pontok_list[i]
-            tav = math.dist((p1['lat'], p1['lon']), (p2['lat'], p2['lon'])) * 111.32  # kb. km
-            kumulativ.append(kumulativ[-1] + tav)
-
-        # DB szakaszok (61-es teszt útra)
+    def get_sections(self, ev):
+        """Minden szakasz lekérdezése évre"""
         conn = sqlite3.connect(self.db_path)
-        cur = conn.cursor()
-        cur.execute("SELECT kezdo, veg, hossz_m, tipus, szorzo FROM utszakaszok WHERE ev=? AND ut_szam='61' ORDER BY CAST(REPLACE(kezdo,' + ','.') AS REAL)", (ev,))
-        szakaszok = cur.fetchall()
+        query = """
+        SELECT ut_szam, azonosito, kezdo, veg, hossz_m, tipus, szorzo
+        FROM utszakaszok WHERE ev = ? ORDER BY ut_szam
+        """
+        result = conn.execute(query, (ev,)).fetchall()
         conn.close()
+        return result
 
-        def szelveny_num(s): return float(s.replace(" + ", ".").replace(" ", ""))
+    def geocode_telepules(self, nev):
+        """Településnév → koordináta (geopy, fallback manual)"""
+        try:
+            location = self.geolocator.geocode(nev + ", Magyarország")
+            if location:
+                return {"lat": location.latitude, "lon": location.longitude}
+        except GeocoderTimedOut:
+            print(f"Geokódolás timeout: {nev}")
+        # Fallback manual koordináták
+        if nev in self.fallback_coords:
+            lat, lon = self.fallback_coords[nev]
+            return {"lat": lat, "lon": lon}
+        return None
 
+    def get_real_km(self, pontok):
+        """Valódi útvonal kumulatív km (OSRM vagy haversine)"""
+        if len(pontok) < 2:
+            return [0.0]
+        coords = ";".join(f"{p['lon']},{p['lat']}" for p in pontok)
+        url = f"http://router.project-osrm.org/route/v1/driving/{coords}?overview=false&alternatives=false"
+        try:
+            r = requests.get(url, timeout=10)
+            if r.status_code == 200:
+                data = r.json()
+                if "routes" in data and data["routes"]:
+                    route = data["routes"][0]
+                    kumulativ = [0.0]
+                    for leg in route["legs"]:
+                        kumulativ.append(kumulativ[-1] + leg["distance"] / 1000.0)
+                    return kumulativ
+        except Exception as e:
+            print(f"OSRM hiba: {e}")
+        # Fallback haversine
+        kumulativ = [0.0]
+        for i in range(1, len(pontok)):
+            p1 = pontok[i-1]
+            p2 = pontok[i]
+            d = haversine((p1['lat'], p1['lon']), (p2['lat'], p2['lon']))
+            kumulativ.append(kumulativ[-1] + d)
+        return kumulativ
+
+    def szelveny_num(self, s):
+        """Szelvény konverter km-re"""
+        if not isinstance(s, str) or '+' not in s:
+            return 0.0
+        s = s.replace(' ', '')
+        s = s.replace('+', '.')
+        try:
+            return float(s)
+        except ValueError:
+            return 0.0
+
+    def szamolas_terkep_pontokkal(self, pontok_input, ev=2025, kategoria="J5", euro="EURO6", netto_brutto="netto"):
+        """Fő számítás: pontokból útvonal, arányos díj (fixelt scale nélkül)"""
+        if isinstance(pontok_input, str):  # Település string
+            telepulesek = pontok_input.split(" → ")
+            pontok = []
+            for nev in telepulesek:
+                coord = self.geocode_telepules(nev.strip())
+                if coord:
+                    pontok.append(coord)
+                else:
+                    return f"<span style='color:red'>Geokódolás hiba: {nev}</span>"
+            if len(pontok) < 2:
+                return "<span style='color:red'>Legalább 2 település szükséges!</span>"
+        else:
+            pontok = pontok_input
+
+        # 1. Útvonal kumulatív km
+        kumulativ = self.get_real_km(pontok)
+        osszes_tav = kumulativ[-1]
+        if osszes_tav == 0:
+            return "<span style='color:red'>Hiba a távolság számításban!</span>"
+
+        # 2. Szakaszok lekérdezés
+        szakaszok = self.get_sections(ev)
+        if not szakaszok:
+            return f"<span style='color:red'>Nincs szakasz adat {ev}-re!</span>"
+
+        # 3. Díjak lekérdezés
+        infra_gyors, infra_fo, kulso_lezajo, co2 = self.get_tariffs(kategoria, ev, euro)
+        netto_factor = 1 / AFA if netto_brutto == "netto" else 1.0
+
+        # 4. Arányos atfedes (route_km / db_total * hossz_km)
+        db_total_hossz_km = sum(s[4] for s in szakaszok) / 1000.0
         osszdij = 0.0
-        kimutatas = f"<h3>Útvonal számítás – {ev}, {kategoria}, {euro}</h3><ol>"
+        kimutatas = f"<h3>{ev} - {kategoria} - {euro} - Teljes: {osszes_tav:.1f} km</h3><ol>"
 
-        for i in range(len(pontok_list)-1):
+        for i in range(len(pontok) - 1):
             k = kumulativ[i]
-            v = kumulativ[i+1]
+            v = kumulativ[i + 1]
+            resz_tav = v - k
             resz_dij = 0.0
-            kimutatas += f"<li>Szakasz {i+1} ({v-k:.1f} km):<br>"
+            kimutatas += f"<li>Szakasz {i+1} ({resz_tav:.1f} km):<br>"
 
-            for kezdo_str, veg_str, hossz_m, tipus, szorzo in szakaszok:
-                k_db = szelveny_num(kezdo_str)
-                v_db = szelveny_num(veg_str)
-                atfedes = max(0, min(v, v_db) - max(k, k_db))
+            for ut, azono, kezdo, veg, hossz, tipus, szorzo in szakaszok:
+                hossz_km = hossz / 1000.0
+                atfedes = resz_tav * (hossz_km / db_total_hossz_km)  # Arányos
                 if atfedes > 0:
-                    infra = dij["infra_gy"] if "gyors" in tipus else dij["infra_f"]
-                    kulso = dij["kulso"].get(euro, 0.0)
-                    rate = infra + kulso
-                    dij_resz = atfedes * rate * szorzo
-                    if netto_brutto == "netto":
-                        dij_resz /= AFA
+                    infra = infra_gyors if "gyorsforgalmi" in tipus else infra_fo
+                    rate_brutto = infra + (kulso_lezajo * szorzo) + co2
+                    dij_resz = atfedes * rate_brutto * netto_factor
                     resz_dij += dij_resz
-                    kimutatas += f"  • {atfedes:.2f} km × {rate:.1f} Ft/km × {szorzo:.3f} = {dij_resz:,.0f} Ft<br>"
+                    kimutatas += f"  • {ut} {azono}: {atfedes:.2f} km × {rate_brutto:.1f} Ft/km × {szorzo:.3f} = {dij_resz:,.0f} Ft<br>"
+
             osszdij += resz_dij
-            kimutatas += f"  <b>Részösszeg: {resz_dij:,.0f} Ft</b></li>"
+            kimutatas += f"  <b>Rész: {resz_dij:,.0f} Ft</b></li>"
 
         kimutatas += "</ol>"
-        if netto_brutto == "netto":
-            osszdij /= AFA
         kimutatas += f"<h2 style='color:green'>Összesen: <b>{osszdij:,.0f} Ft ({netto_brutto.upper()})</b></h2>"
+        kimutatas += f"<small>Átlag: {osszdij / osszes_tav:.2f} Ft/km</small>"
+
         return kimutatas
+
+# Teszt
+if __name__ == "__main__":
+    kalk = UtdijKalkulator()
+    eredmeny = kalk.szamolas_terkep_pontokkal("Szekszárd → Cece → Nemesszalók", ev=2025, kategoria="J5", euro="EURO6", netto_brutto="netto")
+    print(eredmeny[:500] + "...")
