@@ -1,0 +1,34 @@
+<!DOCTYPE html>
+<html lang="hu">
+<head>
+    <meta charset="UTF-8">
+    <title>Útvonal építése</title>
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+    <link rel="stylesheet" href="https://unpkg.com/leaflet.pm@latest/dist/leaflet.pm.css" />
+    <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+</head>
+<body>
+    <h1>Útvonal építése</h1>
+    <p>Kategória: {{ kategoria }} | EURO: {{ euro }} | Év: {{ ev }}</p>
+    
+    <div id="pontok">
+        <div class="pont">
+            <input type="text" class="telepules" placeholder="Település neve" autocomplete="off">
+            <button type="button" class="torol" style="display:none;">Töröl</button>
+        </div>
+        <div class="pont">
+            <input type="text" class="telepules" placeholder="Település neve" autocomplete="off">
+            <button type="button" class="torol" style="display:none;">Töröl</button>
+        </div>
+    </div>
+    <button id="ujpont">+ Új pont hozzáadása</button>
+    <button id="szamit" disabled>Számít</button>
+    <p id="eredmeny"></p>
+    
+    <div id="map" style="height: 500px; margin-top: 20px;"></div>
+
+    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+    <script src="https://unpkg.com/leaflet.pm@latest/dist/leaflet.pm.min.js"></script>
+    <script src="{{ url_for('static', filename='script.js') }}"></script>
+</body>
+</html>

@@ -1,65 +1,46 @@
-from flask import Flask, render_template, request, jsonify
-from main import UtdijKalkulator
-import os
+from flask import Flask, render_template, request, redirect, url_for, session, jsonify
+from flask_session import Session
+from db_manager import get_db_connection
+from kalkulator import szamol_dij
 
 app = Flask(__name__)
-
-# Adatbázis útvonal
-DB_PATH = "utdij_adatbazis.db"
-
-# Globális kalkulátor példány (indításkor egyszer létrejön)
-kalkulator = UtdijKalkulator(DB_PATH)
-
+app.config['SECRET_KEY'] = 'super-secret-key'  # Termelésben cseréld erősebbre
+app.config['SESSION_TYPE'] = 'filesystem'
+Session(app)
 
 @app.route('/', methods=['GET', 'POST'])
-def index():
-    # Főoldal – most már csak a településes/térképes felületet szolgálja ki
-    return render_template('index.html')
+def params():
+    if request.method == 'POST':
+        session['ev'] = request.form['ev']
+        session['kategoria'] = request.form['kategoria']
+        session['euro'] = request.form['euro']
+        return redirect(url_for('utvonal'))
+    
+    conn = get_db_connection()
+    c = conn.cursor()
+    c.execute("SELECT DISTINCT ev FROM dijak ORDER BY ev DESC")
+    evek = [row[0] for row in c.fetchall()]
+    
+    kategoriak = ['Személygépkocsi', 'Motorkerékpár', 'Autóbusz', 'Tehergépkocsi']  # szükség szerint bővíthető
+    euro_osztalyok = ['EURO 0', 'EURO 1', 'EURO 2', 'EURO 3', 'EURO 4', 'EURO 5', 'EURO 6']
+    
+    conn.close()
+    return render_template('params.html', evek=evek, kategoriak=kategoriak, euro_osztalyok=euro_osztalyok)
 
-
-# ------------------------------------------------------------------
-# 1. Térképes kattintgatós számolás (több ponttal)
-# ------------------------------------------------------------------
-@app.route('/szamol_terkep', methods=['POST'])
-def szamol_terkep():
-    data = request.get_json()
-    pontok = data.get('pontok', [])
-    kategoria = data.get('kategoria', 'J5')
-    ev = int(data.get('ev', 2026))
-
-    if len(pontok) < 2:
-        return jsonify({"hiba": "Legalább 2 pont szükséges!"})
-
-    eredmeny = kalkulator.szamolas_terkep_pontokkal(pontok, kategoria=kategoria, ev=ev)
-    return jsonify({"eredmeny": eredmeny})
-
-
-# ------------------------------------------------------------------
-# 2. Településes keresés (pl. Budapest → Szeged → Pécs)
-#    → ugyanazt a számoló függvényt használja, mint a kattintgatós
-# ------------------------------------------------------------------
-@app.route('/szamol_telepulesekkel', methods=['POST'])
-def szamol_telepulesekkel():
-    data = request.get_json()
-    pontok = data.get('pontok', [])
-    ev = int(data.get('ev', 2026))
-    kategoria = data.get('kategoria', 'J5')
-    euro = data.get('euro', 'EURO6')
-    netto_brutto = data.get('netto_brutto', 'netto')
-
-    eredmeny = kalkulator.szamolas_terkep_pontokkal(pontok, ev, kategoria, euro, netto_brutto)
-    return jsonify({"eredmeny": eredmeny})
-
-
-# ------------------------------------------------------------------
-# (Opcionális) Egy régi egyszerű route, ha valahol még használod
-# ------------------------------------------------------------------
-@app.route('/egyszeru', methods=['GET', 'POST'])
-def egyszeru():
-    # Ha később vissza akarod hozni a dropdown-os verziót
-    return render_template('egyszeru.html')
-
+@app.route('/utvonal', methods=['GET', 'POST'])
+def utvonal():
+    if 'ev' not in session:
+        return redirect(url_for('params'))
+    
+    if request.method == 'POST':
+        coords = request.json['coords']  # [[lon, lat], ...]
+        dij = szamol_dij(session['kategoria'], session['euro'], session['ev'], coords)
+        return jsonify({'dij': dij})
+    
+    return render_template('utvonal.html',
+                           kategoria=session['kategoria'],
+                           euro=session['euro'],
+                           ev=session['ev'])
 
 if __name__ == '__main__':
-    # Debug mód – fejlesztés közben nagyon hasznos
     app.run(debug=True)

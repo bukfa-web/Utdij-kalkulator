@@ -1,0 +1,17 @@
+<!DOCTYPE html>
+<html lang="hu">
+<head>
+    <meta charset="UTF-8">
+    <title>Jármű paraméterek</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+</head>
+<body>
+    <h1>E-matrica díjkalkulátor – 1. lépés</h1>
+    <form method="POST">
+        <label>Év: <select name="ev" required>{% for ev in evek %}<option>{{ ev }}</option>{% endfor %}</select></label><br>
+        <label>Kategória: <select name="kategoria" required>{% for kat in kategoriak %}<option>{{ kat }}</option>{% endfor %}</select></label><br>
+        <label>EURO osztály: <select name="euro" required>{% for euro in euro_osztalyok %}<option>{{ euro }}</option>{% endfor %}</select></label><br>
+        <button type="submit">Tovább az útvonalhoz</button>
+    </form>
+</body>
+</html>

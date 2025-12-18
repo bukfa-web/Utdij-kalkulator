@@ -1,0 +1,7 @@
+body { font-family: Arial, sans-serif; margin: 20px; }
+.pont { margin: 10px 0; }
+input.telepules { width: 300px; padding: 8px; }
+.valid { border: 2px solid green; }
+.invalid { border: 2px solid red; }
+button { margin: 5px; padding: 8px 12px; }
+#eredmeny { font-weight: bold; font-size: 1.2em; }
